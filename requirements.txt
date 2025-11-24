@@ -1,6 +1,7 @@
 streamlit
 torch
 timm
-numpy
+albumentations
 opencv-python-headless
+numpy
 Pillow
