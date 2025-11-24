@@ -4,5 +4,3 @@ timm
 numpy
 opencv-python-headless
 Pillow
-pytorch-grad-cam
-albumentations
