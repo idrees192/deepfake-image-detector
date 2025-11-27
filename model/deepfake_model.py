@@ -41,4 +41,3 @@ def load_model(path: str = "model/deepfake_model.pth", device: str = "cpu", back
     model.to(device)
     model.eval()
     return model
-
