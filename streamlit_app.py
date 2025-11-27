@@ -5,17 +5,38 @@ import numpy as np
 import torchvision.transforms as T
 import timm
 
-# -------------- LOAD MODEL --------------
+# -------------------------
+# MODEL DEFINITION (MATCH TRAINING EXACTLY)
+# -------------------------
+class DeepfakeModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.model = timm.create_model(
+            "efficientnet_b0",
+            pretrained=True,
+            num_classes=2
+        )
+
+    def forward(self, x):
+        return self.model(x)
+
+
+# -------------------------
+# LOAD MODEL
+# -------------------------
 @st.cache_resource
 def load_model():
-    model = timm.create_model("efficientnet_b0", pretrained=False, num_classes=2)
-    model.load_state_dict(torch.load("model/deepfake_model.pth", map_location="cpu"))
+    model = DeepfakeModel()
+    state_dict = torch.load("model/deepfake_model.pth", map_location="cpu")
+    model.load_state_dict(state_dict, strict=False)
     model.eval()
     return model
 
 model = load_model()
 
-# -------------- PREPROCESS --------------
+# -------------------------
+# PREPROCESS
+# -------------------------
 transform = T.Compose([
     T.Resize((224, 224)),
     T.ToTensor(),
@@ -23,12 +44,12 @@ transform = T.Compose([
                 [0.229, 0.224, 0.225])
 ])
 
-# -------------- UI --------------
-st.title("Deepfake Image Detector (Simple Version)")
-uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+st.title("Deepfake Image Detector — SIMPLE VERSION")
+
+uploaded = st.file_uploader("Upload an image", type=["jpg","jpeg","png"])
 
 if uploaded:
-    st.image(uploaded, caption="Uploaded Image", use_column_width=True)
+    st.image(uploaded)
 
     img = Image.open(uploaded).convert("RGB")
     x = transform(img).unsqueeze(0)
