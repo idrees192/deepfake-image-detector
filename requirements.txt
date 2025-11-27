@@ -1,7 +1,11 @@
-streamlit
-torch
+fastapi
+uvicorn[standard]
+python-multipart
 timm
+pillow
 albumentations
-opencv-python-headless
 numpy
-Pillow
+opencv-python
+pytorch-grad-cam
+pyngrok
+requests
