@@ -4,4 +4,6 @@ model/*.pth
 *.pth
 .env
 .evidence/
+logs/*.jsonl
+security/keys/encryption.key
 
