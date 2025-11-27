@@ -7,5 +7,7 @@ albumentations
 numpy
 opencv-python
 pytorch-grad-cam
-pyngrok
+cryptography
+pyjwt
 requests
+streamlit
