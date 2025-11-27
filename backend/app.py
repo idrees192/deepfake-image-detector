@@ -1,104 +1,144 @@
+# backend/app.py
+import os
 import io
-import torch
-from fastapi import FastAPI, UploadFile, File
-from PIL import Image
+import time
+import json
+import logging
+import hashlib
+from typing import Dict, Any
+
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
+from PIL import Image, UnidentifiedImageError
+
 import numpy as np
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
+import cv2
+import torch
 
-# Import your model
-from model.deepfake_model import load_model
+from utils.gradcam_utils import predict_and_heatmap, load_model as gradcam_load_model
 
-# Security utilities
-from utils.hashing import compute_sha256
-from utils.validator import validate_image
-from utils.rate_limiter import allow_request
-from utils.encryption import encrypt_image
-from utils.tokens import generate_verification_token
-from utils.logger import log_detection
-from utils.risk_score import compute_risk
+# Configuration (override using env vars if needed)
+MODEL_PATH = os.getenv("MODEL_PATH", "model/deepfake_model.pth")
+EVIDENCE_DIR = os.getenv("EVIDENCE_DIR", "evidence")
+IMG_SIZE = int(os.getenv("IMG_SIZE", "224"))
 
-app = FastAPI()
+os.makedirs(EVIDENCE_DIR, exist_ok=True)
 
-# -----------------------------
-# MODEL & PREPROCESSING
-# -----------------------------
-model = load_model()
-model.eval()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("deepfake_api")
 
-IMG_SIZE = 224
+app = FastAPI(title="Deepfake Image Verifier")
 
-transform = A.Compose([
-    A.Resize(IMG_SIZE, IMG_SIZE),
-    A.Normalize(mean=(0.485, 0.456, 0.406),
-                std=(0.229, 0.224, 0.225)),
-    ToTensorV2()
-])
+# Load model on startup
+MODEL = None
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-def preprocess(image: Image.Image):
-    img = np.array(image)
-    img = transform(image=img)["image"]
-    return img.unsqueeze(0)  # shape: [1, 3, 224, 224]
+@app.on_event("startup")
+def on_startup():
+    global MODEL
+    logger.info("Starting up - loading model on device=%s", DEVICE)
+    try:
+        MODEL = gradcam_load_model(MODEL_PATH, device=DEVICE)
+        logger.info("Model loaded successfully.")
+    except Exception as e:
+        logger.exception("Failed to load model on startup: %s", e)
+        # allow server to start; requests will get errors until model is fixed
+        MODEL = None
 
+def sha256_bytes(b: bytes) -> str:
+    h = hashlib.sha256()
+    h.update(b)
+    return h.hexdigest()
 
-@app.post("/detect")
-async def detect_image(file: UploadFile = File(...)):
+@app.post("/analyze")
+async def analyze(file: UploadFile = File(...)):
+    """
+    Accept an uploaded image file, run model inference and Grad-CAM,
+    return verdict, confidence, and a heatmap URL.
+    """
+    if MODEL is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
 
-    # Read file bytes
-    file_bytes = await file.read()
+    # read bytes
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty file")
 
-    # 1. VALIDATION
-    valid, msg = validate_image(file_bytes)
-    if not valid:
-        return {"error": msg}
+    # protect against extremely large uploads
+    if len(contents) > 25_000_000:
+        raise HTTPException(status_code=400, detail="File too large (max 25MB)")
 
-    # 2. RATE LIMIT
-    if not allow_request("user"):
-        return {"error": "Rate limit exceeded. Try again later."}
+    # Validate image
+    try:
+        pil = Image.open(io.BytesIO(contents)).convert("RGB")
+    except UnidentifiedImageError:
+        raise HTTPException(status_code=400, detail="Uploaded file is not a valid image")
 
-    # 3. HASHING
-    image_hash = compute_sha256(file_bytes)
+    # compute hash
+    file_hash = sha256_bytes(contents)
+    original_path = os.path.join(EVIDENCE_DIR, f"{file_hash}.png")
+    heatmap_path = os.path.join(EVIDENCE_DIR, f"{file_hash}_heatmap.png")
+    meta_path = os.path.join(EVIDENCE_DIR, f"{file_hash}.json")
 
-    # 4. ENCRYPT IMAGE
-    encrypted_path = encrypt_image(file_bytes, image_hash)
+    # Save original image (safe)
+    try:
+        pil.save(original_path)
+    except Exception:
+        # as a fallback, write raw bytes
+        with open(original_path, "wb") as f:
+            f.write(contents)
 
-    # 5. LOAD IMAGE
-    image = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+    # Run prediction + gradcam safely
+    try:
+        res = predict_and_heatmap(MODEL, pil, device=DEVICE, img_size=IMG_SIZE)
+    except Exception as e:
+        logger.exception("Inference failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Inference error: {e}")
 
-    # 6. PREPROCESS
-    tensor = preprocess(image)
+    # res expected: {'verdict': 'FAKE'|'REAL', 'confidence': float, 'heatmap': np.ndarray (H,W,3) uint8}
+    verdict = res.get("verdict", "UNKNOWN")
+    confidence = float(res.get("confidence", 0.0))
+    heatmap = res.get("heatmap", None)
 
-    # 7. MODEL PREDICTION
-    with torch.no_grad():
-        outputs = model(tensor)
-        probs = torch.softmax(outputs, dim=1).numpy()[0]
+    # Save heatmap if returned
+    if isinstance(heatmap, np.ndarray):
+        try:
+            # ensure uint8 BGR for cv2.imwrite
+            if heatmap.dtype != np.uint8:
+                heatmap = (np.clip(heatmap, 0, 255)).astype(np.uint8)
+            # convert RGB -> BGR for OpenCV writer
+            bgr = cv2.cvtColor(heatmap, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(heatmap_path, bgr)
+        except Exception:
+            # fallback: save via PIL
+            try:
+                Image.fromarray(heatmap).save(heatmap_path)
+            except Exception as e:
+                logger.warning("Failed to save heatmap: %s", e)
 
-    confidence = float(probs[1])  # index 1 = fake
-    label = "fake" if confidence > 0.5 else "real"
-
-    # 8. RISK SCORE
-    risk_level = compute_risk(confidence)
-
-    # 9. JWT TOKEN
-    token = generate_verification_token(
-        image_hash=image_hash,
-        label=label,
-        confidence=confidence
-    )
-
-    # 10. LOGGING
-    log_detection(
-        image_hash=image_hash,
-        label=label,
-        confidence=confidence
-    )
-
-    # 11. RESPONSE
-    return {
-        "label": label,
+    # Save metadata
+    meta = {
+        "file_hash": file_hash,
+        "verdict": verdict,
         "confidence": confidence,
-        "risk": risk_level,
-        "token": token,
-        "encrypted_path": encrypted_path,
-        "hash": image_hash
+        "timestamp": int(time.time()),
+        "model_path": MODEL_PATH
     }
+    with open(meta_path, "w") as f:
+        json.dump(meta, f)
+
+    # generate response
+    resp = {
+        "file_hash": file_hash,
+        "verdict": verdict,
+        "confidence": confidence,
+        "heatmap_url": f"/heatmap/{file_hash}"
+    }
+    return JSONResponse(content=resp)
+
+@app.get("/heatmap/{file_hash}")
+def get_heatmap(file_hash: str):
+    p = os.path.join(EVIDENCE_DIR, f"{file_hash}_heatmap.png")
+    if not os.path.exists(p):
+        raise HTTPException(status_code=404, detail="Heatmap not found")
+    return FileResponse(p, media_type="image/png")
