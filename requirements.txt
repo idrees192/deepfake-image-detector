@@ -1,8 +1,8 @@
-torch
-torchvision
+fastapi
+uvicorn[standard]
 timm
-opencv-python-headless
+torch                # consider pinning to a version that works with Render's Python
+torchvision
+pillow
 numpy
-Pillow
-streamlit
-albumentations
+opencv-python-headless
