@@ -10,24 +10,24 @@ from pymongo import MongoClient
 from datetime import datetime
 import io
 
-# -------------------------
-# MONGODB CONNECTION
-# -------------------------
+# ================================================================
+#  MONGODB CONNECTION  (YOUR DB + COLLECTION)
+# ================================================================
 @st.cache_resource
 def get_db():
     client = MongoClient(
         "mongodb+srv://khanmidrees693_db_user:mGrml4gCOcBJWNju@cluster0.aav7zwl.mongodb.net/"
     )
-    db = client["deepfake_logs"]    # database name
+    db = client["deepfake"]     # your database name
     return db
 
 db = get_db()
-logs = db["image_logs"]  # collection name
+logs = db["fake"]  # your collection name
 
 
-# -------------------------
-# MODEL DEFINITION
-# -------------------------
+# ================================================================
+#  MODEL DEFINITION
+# ================================================================
 class DeepfakeModel(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -36,13 +36,14 @@ class DeepfakeModel(torch.nn.Module):
             pretrained=True,
             num_classes=2
         )
+
     def forward(self, x):
         return self.model(x)
 
 
-# -------------------------
-# LOAD MODEL
-# -------------------------
+# ================================================================
+#  LOAD MODEL
+# ================================================================
 @st.cache_resource
 def load_model():
     model = DeepfakeModel()
@@ -53,9 +54,10 @@ def load_model():
 
 model = load_model()
 
-# -------------------------
-# TRANSFORM
-# -------------------------
+
+# ================================================================
+#  IMAGE TRANSFORM
+# ================================================================
 transform = T.Compose([
     T.Resize((224, 224)),
     T.ToTensor(),
@@ -63,28 +65,42 @@ transform = T.Compose([
                 [0.229, 0.224, 0.225])
 ])
 
-st.title("Deepfake Image Detector — With MongoDB Logging")
 
-uploaded = st.file_uploader("Upload an image", type=["jpg","jpeg","png"])
-
+# ================================================================
+#  HELPER FUNCTIONS
+# ================================================================
 def compute_hash(image_bytes):
+    """Compute SHA256 hash of uploaded image."""
     return hashlib.sha256(image_bytes).hexdigest()
 
 def encode_image_base64(img):
-    buffered = io.BytesIO()
-    img.save(buffered, format="PNG")
-    return base64.b64encode(buffered.getvalue()).decode()
+    """Encode image to base64 for MongoDB storage."""
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
+# ================================================================
+#  STREAMLIT UI
+# ================================================================
+st.title("Deepfake Image Detector — With MongoDB Logging")
+
+uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 if uploaded:
-
+    # Display image
     st.image(uploaded)
 
-    # Read image bytes for hashing
+    # Read bytes
     image_bytes = uploaded.read()
+
+    # Load image for preprocessing
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
+    # Preprocess
     x = transform(img).unsqueeze(0)
 
+    # Predict
     with torch.no_grad():
         out = model(x)
         probs = torch.softmax(out, dim=1)[0]
@@ -93,16 +109,17 @@ if uploaded:
 
     label = "FAKE" if fake > real else "REAL"
 
-    st.subheader("Prediction")
+    # Show prediction
+    st.subheader("Prediction Results")
     st.write(f"**Label:** {label}")
-    st.write(f"Fake Probability: {fake:.4f}")
-    st.write(f"Real Probability: {real:.4f}")
+    st.write(f"**Fake Probability:** {fake:.4f}")
+    st.write(f"**Real Probability:** {real:.4f}")
 
-    # -------------------------
-    # STORE LOG INTO MONGODB
-    # -------------------------
+    # ================================================================
+    #  SAVE LOG TO MONGODB
+    # ================================================================
     try:
-        log_data = {
+        log_entry = {
             "image_hash": compute_hash(image_bytes),
             "label": label,
             "fake_prob": fake,
@@ -111,9 +128,9 @@ if uploaded:
             "image_base64": encode_image_base64(img)
         }
 
-        logs.insert_one(log_data)
+        logs.insert_one(log_entry)
 
-        st.success("Log saved to MongoDB Atlas successfully! 🎉")
+        st.success("✔ Log saved to MongoDB successfully!")
 
     except Exception as e:
-        st.error(f"Error saving log to MongoDB: {e}")
+        st.error(f"❌ Error saving to MongoDB: {e}")
