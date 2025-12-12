@@ -83,7 +83,7 @@ def encode_image_base64(img):
 # ================================================================
 #  STREAMLIT UI
 # ================================================================
-st.title("Deepfake Image Detector — With MongoDB Logging")
+st.title("Deepfake Image Detector ")
 
 uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
