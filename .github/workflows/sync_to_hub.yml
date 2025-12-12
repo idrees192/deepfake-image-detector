@@ -19,7 +19,7 @@ jobs:
 
       - name: Push to Hugging Face Space
         run: |
-          git remote add hub https://IdreesKhan315:${HF_TOKEN}@huggingface.co/spaces/IdreesKhan315/deepfake-image-detector.git
+          git remote add hub https://IdreesKhan315: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@huggingface.co/spaces/IdreesKhan315/deepfake-image-detector.git
           git push hub main --force
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
