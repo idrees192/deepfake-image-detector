@@ -1,9 +1,92 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
-model/*.pth
-*.pth
-.env
-.evidence/
-logs/*.jsonl
-security/keys/encryption.key
+*.py[cod]
+*$py.class
+*.so
 
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+venv*/
+venv310/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Streamlit
+.streamlit/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+*.key
+
+# Model files (large binaries - use Git LFS or store externally)
+model/*.h5
+model/*.keras
+model/*.ckpt
+model/*.weights.h5
+
+# Logs
+*.log
+log.txt
+log_legacy.txt
+
+# Temporary files
+*.tmp
+*.temp
