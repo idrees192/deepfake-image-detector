@@ -28,24 +28,33 @@ def _import_streamlit():
 # Add parent directory to path to import config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# ---------------------------------------------------------
+# SECURITY FIX: Load credentials from config file or env vars
+# ---------------------------------------------------------
 try:
-    from config_mongodb import MONGODB_URI, DATABASE_NAME, COLLECTION_NAME
+    # Try to import from local config file (config_mongodb.py)
+    from config_mongodb import MONGO_URI, DATABASE_NAME, COLLECTION_NAME
 except ImportError:
-    # Try environment variable first
-    MONGODB_URI = os.getenv("MONGODB_URI")
-    if not MONGODB_URI:
-        # Provide a helpful message
-        MONGODB_URI = "mongodb+srv://khanmidrees693_db_user:IdreesMongo123@cluster0.aav7zwl.mongodb.net/deepfake_detection?retryWrites=true&w=majority"
-    DATABASE_NAME = "deepfake_detection"
-    COLLECTION_NAME = "test_results"
+    # If file not found (e.g., in cloud deployment), use Environment Variables
+    # DO NOT put hardcoded passwords here!
+    MONGO_URI = os.getenv("MONGO_URI")
+    DATABASE_NAME = os.getenv("DATABASE_NAME", "deepfake_detection")
+    COLLECTION_NAME = os.getenv("COLLECTION_NAME", "test_results")
+
+# Final check to ensure we have a URI
+if not MONGO_URI:
+    # Use Streamlit secrets if available (for Streamlit Cloud deployment)
+    st = _import_streamlit()
+    if "MONGO_URI" in st.secrets:
+        MONGO_URI = st.secrets["MONGO_URI"]
+    else:
+        # Stop execution if no URI is found
+        raise ValueError("❌ Error: MONGO_URI not found. Please set it in config_mongodb.py or as an Environment Variable.")
 
 def get_database():
     """
     Establishes connection to MongoDB Atlas and returns database instance.
     Uses Streamlit cache to maintain connection across reruns.
-    
-    Returns:
-        pymongo.database.Database: MongoDB database instance
     """
     MongoClient, ConnectionFailure, ServerSelectionTimeoutError = _import_pymongo()
     st = _import_streamlit()
@@ -54,8 +63,12 @@ def get_database():
     @st.cache_resource
     def _connect():
         try:
-            print(f"Attempting to connect to MongoDB with URI: {MONGODB_URI[:50]}...")
-            client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=10000)
+            # Mask the URI in logs for security
+            masked_uri = MONGO_URI[:15] + "..." + MONGO_URI[-10:] if MONGO_URI else "None"
+            print(f"Attempting to connect to MongoDB with URI: {masked_uri}")
+            
+            client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=10000)
+            
             # Test the connection
             client.admin.command('ping')
             db = client[DATABASE_NAME]
@@ -66,19 +79,11 @@ def get_database():
             print(f"❌ MongoDB Connection Error: {error_msg}")
             
             if "authentication failed" in error_msg.lower() or "bad auth" in error_msg.lower():
-                st.error(f"""
+                st.error("""
                 ❌ **Authentication Failed**
                 
-                Check your MongoDB credentials:
-                - Username: `khanmidrees693_db_user`
-                - Password: `Mongo12345`
-                - Cluster: `cluster0.aav7zwl.mongodb.net`
-                
-                **To fix:**
-                1. Go to [MongoDB Atlas](https://cloud.mongodb.com)
-                2. Click "Database Access"
-                3. Verify username and password match
-                4. Click "Network Access" and allow your IP
+                Please check your `config_mongodb.py` file to ensure your 
+                username and password are correct.
                 """)
             else:
                 st.error(f"❌ Database Connection Error: {error_msg}")
@@ -95,9 +100,6 @@ def get_database():
 def get_collection():
     """
     Returns the test results collection.
-    
-    Returns:
-        pymongo.collection.Collection: MongoDB collection instance
     """
     db = get_database()
     if db is None:
@@ -107,9 +109,6 @@ def get_collection():
 def test_connection():
     """
     Tests the MongoDB connection.
-    
-    Returns:
-        bool: True if connection successful, False otherwise
     """
     try:
         db = get_database()
